@@ -17,8 +17,11 @@ def execute(ctx: ToolContext, inp: dict) -> dict:
     if not jmeno:
         raise ToolError("Jméno nesmí být prázdné.", code="invalid_input")
     ctx.log.info("Zdravím %s", jmeno)
+    pozdrav = f"Ahoj, {jmeno}! Tady PyControl."
     return {
-        "pozdrav": f"Ahoj, {jmeno}! Tady PyControl.",
+        "pozdrav": pozdrav,
         "cas_serveru": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "pozadal": ctx.requester,
+        "verze_nastroje": "1.0.1",
+        "summary": pozdrav,
     }

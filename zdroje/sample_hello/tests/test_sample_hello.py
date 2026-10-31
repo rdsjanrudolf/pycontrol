@@ -29,3 +29,11 @@ def test_empty_name_is_tool_error():
     m = load_manifest(TOOL_DIR)
     res = ToolExecutor().run(m, "execute", {"jmeno": "  "}, _ctx(), timeout=10)
     assert res.status == "error" and res.error["code"] == "invalid_input"
+
+
+def test_summary_and_version():
+    m = load_manifest(TOOL_DIR)
+    res = ToolExecutor().run(m, "execute", {"jmeno": "Jan"}, _ctx(), timeout=10)
+    assert res.ok, res.error
+    assert res.data["summary"] == res.data["pozdrav"]
+    assert res.data["verze_nastroje"] == m.version
