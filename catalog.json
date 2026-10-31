@@ -2,7 +2,7 @@
   "schema_version": 1,
   "publisher": "Jan",
   "key_id": "48231b4d5ed8b52c",
-  "generated": "2026-10-31T22:33:39+00:00",
+  "generated": "2026-10-31T22:52:20+00:00",
   "components": [
     {
       "type": "tool",
@@ -23,6 +23,21 @@
           "key_id": "48231b4d5ed8b52c",
           "released": "2026-10-31T22:33:38Z",
           "changelog": "První vydání",
+          "security_notes": "",
+          "yanked": false
+        },
+        {
+          "version": "1.0.1",
+          "core_compat": ">=1.0,<2.0",
+          "risk": "read",
+          "permissions": [],
+          "dependencies": [],
+          "url": "./balicky/sample.hello-1.0.1.pctool",
+          "sha256": "c9efeea1483476a9fbe7e1470357aaa8f445a9cce7053c794ef858a36b4d46e0",
+          "size": 1796,
+          "key_id": "48231b4d5ed8b52c",
+          "released": "2026-10-31T22:52:19Z",
+          "changelog": "Pole summary pro Telegram a číslo verze ve výsledku",
           "security_notes": "",
           "yanked": false
         }
