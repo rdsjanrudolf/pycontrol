@@ -266,7 +266,7 @@ try {
     }
     $cil = 'na GitHub'
     if ($BezPush) { $cil = 'jen lokálně (bez push)' }
-    $odpoved = Read-Host "Zveřejnit $cil? Napište 'ano'"
+    $odpoved = Read-Host "Zveřejnit ${cil}? Napište 'ano'"
     if ($odpoved -ne 'ano') { throw 'Vydání nepotvrzeno.' }
 
     # --- 6. commit -------------------------------------------------------------------
