@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "publisher": "Jan",
+  "key_id": "48231b4d5ed8b52c",
+  "generated": "2026-10-31T22:33:39+00:00",
+  "components": [
+    {
+      "type": "tool",
+      "id": "sample.hello",
+      "name": "Ukázkový pozdrav",
+      "description": "Vzorový nástroj pro autory nových nástrojů: pozdraví zadané jméno a vrátí čas serveru. Slouží jako šablona.",
+      "author": "Vlastník PyControlu",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "core_compat": ">=1.0,<2.0",
+          "risk": "read",
+          "permissions": [],
+          "dependencies": [],
+          "url": "./balicky/sample.hello-1.0.0.pctool",
+          "sha256": "eff9859c514033237ad3665884de684e123fe804f86a33c70e97a057af5a0ecf",
+          "size": 1761,
+          "key_id": "48231b4d5ed8b52c",
+          "released": "2026-10-31T22:33:38Z",
+          "changelog": "První vydání",
+          "security_notes": "",
+          "yanked": false
+        }
+      ]
+    }
+  ]
+}
