@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "sample.hello",
+  "name": "Ukázkový pozdrav",
+  "description": "Vzorový nástroj pro autory nových nástrojů: pozdraví zadané jméno a vrátí čas serveru. Slouží jako šablona.",
+  "version": "1.0.0",
+  "author": "Vlastník PyControlu",
+  "core_compat": ">=1.0,<2.0",
+  "entrypoint": "tool:execute",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "jmeno": {"type": "string", "minLength": 1, "maxLength": 50, "description": "Koho pozdravit."}
+    },
+    "required": ["jmeno"],
+    "additionalProperties": false
+  },
+  "risk": "read",
+  "permissions": [],
+  "timeout_seconds": 10,
+  "examples": ["Pozdrav Jana"]
+}

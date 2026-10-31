@@ -1,0 +1,12 @@
+# Soukromé klíče sem NIKDY nepatří
+*.pem
+*.key
+
+# Python a testy
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Pracovní složky
+dist/
+*.tmp

@@ -1,0 +1,14 @@
+# Ostatní soubory (zdrojáky nástrojů, dokumentace) normalizovat.
+# Musí být první – pozdější řádky mají přednost.
+*                 text=auto
+
+# Podepsané soubory se nesmí měnit ani v koncích řádků.
+# Git for Windows (core.autocrlf=true) by jinak při commitu převedl CRLF na LF
+# a podpis katalogu by na serveru přestal platit.
+catalog.json      -text
+catalog.json.sig  -text
+*.pctool          binary
+*.pub             -text
+
+# Skripty PowerShellu s konci řádků Windows
+*.ps1             text eol=crlf
