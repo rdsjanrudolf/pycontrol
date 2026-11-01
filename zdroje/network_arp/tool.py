@@ -110,7 +110,7 @@ VENDORS = {
     "080027": "VirtualBox", "0A0027": "VirtualBox (host-only)",
     "00163E": "Xen", "001C42": "Parallels",
     "00090F": "Fortinet", "906CAC": "Fortinet", "704CA5": "Fortinet", "085B0E": "Fortinet",
-    "E81CBA": "Fortinet",
+    "E81CBA": "Fortinet", "AC712E": "Fortinet",
     "00000C": "Cisco",
     "001132": "Synology",
     "245EBE": "QNAP", "00089B": "QNAP",
@@ -368,37 +368,40 @@ def _ip_key(ip: str) -> int:
 # ---------------------------------------------------------------------------
 
 
-def build_report(raw: dict, inp: dict, names: dict | None = None) -> dict:
-    """Ze surových dat sestaví výsledek (bez DNS – ten doplní ``execute``)."""
+def build_report(raw: dict, inp: dict) -> dict:
+    """Ze surových dat sestaví výsledek (bez DNS – ten doplní ``execute``).
+
+    Klíče výstupu: kde konzole zná český popisek (``KEY_LABELS`` v jádře), použije se jeho klíč
+    (summary, findings, address, name, state, totals, matched, truncated, filters, note); ostatní
+    klíče jsou česky. Tabulka v konzoli ukáže nejvýš 8 sloupců – řádek záznamu má proto přesně 8 polí,
+    případné ``warning`` je deváté (konzole podle něj řádek zvýrazní, ale sloupec nepřidá).
+    """
     interfaces = raw.get("interfaces") or {}
     gateways = raw.get("gateways") or []
     gw_ips = {g["ip"] for g in gateways}
 
     ip_net = ip_filter_network(inp["ip"]) if inp.get("ip") else None
     mac_hex = mac_filter_hex(inp["mac"]) if inp.get("mac") else None
-    iface = (inp.get("interface") or "").strip().lower()
+    iface = (inp.get("interface") or "").strip()
     state_filter = inp.get("state", "all")
     include_mc = bool(inp.get("include_multicast", False))
     limit = int(inp.get("limit", 200))
 
     entries = []
-    hidden_mc = 0
     for n in raw.get("neighbors") or []:
         mac = n.get("mac") or b""
         code, text, kind = STATES.get(n["state"], ("unknown", f"neznámý ({n['state']})", "dynamický"))
         nets = interfaces.get(n["interface"], [])
         multicast = is_multicast(n["ip"], mac) or _is_subnet_broadcast(n["ip"], nets)
-        entries.append({
-            "ip": n["ip"], "mac": format_mac(mac), "vendor": vendor(mac) if not multicast else None,
-            "name": None, "type": kind, "state": text, "state_code": code,
-            "interface": n["interface"], "if_index": n["if_index"],
-            "is_gateway": n["ip"] in gw_ips, "is_router": bool(n.get("is_router")),
-            "multicast": multicast, "_mac": mac,
-        })
+        entries.append({"ip": n["ip"], "mac": format_mac(mac), "raw_mac": mac,
+                        "vendor": None if multicast else vendor(mac), "kind": kind, "state": text,
+                        "code": code, "interface": n["interface"], "if_index": n["if_index"],
+                        "gateway": n["ip"] in gw_ips, "multicast": multicast})
 
     unicast = [e for e in entries if not e["multicast"]]
-    findings = _findings(unicast, gateways, raw.get("gateway_error"))
+    findings, warn_ips = _findings(unicast, gateways, raw.get("gateway_error"))
 
+    hidden_mc = 0
     selected = []
     for e in entries:
         if e["multicast"] and not include_mc:
@@ -406,56 +409,72 @@ def build_report(raw: dict, inp: dict, names: dict | None = None) -> dict:
             continue
         if ip_net and ipaddress.IPv4Address(e["ip"]) not in ip_net:
             continue
-        if mac_hex and (not e["mac"] or mac_hex not in e["_mac"].hex().upper()):
+        if mac_hex and (not e["mac"] or mac_hex not in e["raw_mac"].hex().upper()):
             continue
-        if iface and iface not in e["interface"].lower() and iface != str(e["if_index"]):
+        if iface and iface.lower() not in e["interface"].lower() and iface != str(e["if_index"]):
             continue
-        if state_filter == "dynamic" and e["type"] != "dynamický":
+        if state_filter == "dynamic" and (e["kind"] != "dynamický" or e["multicast"]):
             continue
-        if state_filter == "static" and e["type"] != "statický":
+        if state_filter == "static" and (e["kind"] != "statický" or e["multicast"]):
             continue
-        if state_filter == "problem" and e["state_code"] not in PROBLEM_STATES:
+        if state_filter == "problem" and e["code"] not in PROBLEM_STATES:
             continue
         selected.append(e)
-
     selected.sort(key=lambda e: (e["interface"].lower(), _ip_key(e["ip"])))
-    matched = len(selected)
-    shown = selected[:limit]
-    for e in shown:
-        if names:
-            e["name"] = names.get(e["ip"])
-    rows = [{k: v for k, v in e.items() if not k.startswith("_") and k != "state_code"} for e in shown]
 
-    gw_out = []
+    rows = []
+    for e in selected[:limit]:
+        row = {"address": e["ip"], "mac": e["mac"], "výrobce": e["vendor"], "name": None,
+               "typ": "vícesměrový" if e["multicast"] else e["kind"], "state": e["state"],
+               "rozhraní": e["interface"], "brána": e["gateway"]}
+        if e["ip"] in warn_ips:
+            row["warning"] = warn_ips[e["ip"]]
+        rows.append(row)
+
     by_ip = {e["ip"]: e for e in unicast}
+    gw_out = []
     for g in sorted(gateways, key=lambda g: g.get("metric", 0)):
         e = by_ip.get(g["ip"])
-        gw_out.append({"ip": g["ip"], "interface": g["interface"], "mac": e["mac"] if e else None,
-                       "vendor": e["vendor"] if e else None,
-                       "state": e["state"] if e else "není v ARP tabulce"})
+        gw_out.append({"address": g["ip"], "mac": e["mac"] if e else None, "výrobce": e["vendor"] if e else None,
+                       "state": e["state"] if e else "není v ARP tabulce", "rozhraní": g["interface"]})
 
-    counts = {
+    filters = []
+    if ip_net:
+        filters.append(f"adresa {ip_net}")
+    if mac_hex:
+        filters.append(f"MAC {inp['mac'].strip()}")
+    if iface:
+        filters.append(f"rozhraní {iface}")
+    if state_filter != "all":
+        filters.append({"dynamic": "dynamické", "static": "statické", "problem": "bez odpovědi"}[state_filter])
+
+    rep = {"summary": "", "filters": ", ".join(filters) or None, "truncated": len(selected) > len(rows),
+           "note": None, "findings": findings, "brány": gw_out, "záznamy": rows}
+    rep["totals"] = {
         "total": len(unicast),
-        "dynamic": sum(1 for e in unicast if e["type"] == "dynamický"),
-        "static": sum(1 for e in unicast if e["type"] == "statický"),
-        "problem": sum(1 for e in unicast if e["state_code"] in PROBLEM_STATES),
-        "multicast_hidden": hidden_mc,
-        "matched": matched,
-        "shown": len(rows),
+        "dynamické": sum(1 for e in unicast if e["kind"] == "dynamický"),
+        "statické": sum(1 for e in unicast if e["kind"] == "statický"),
+        "bez_odpovědi": sum(1 for e in unicast if e["code"] in PROBLEM_STATES),
+        "vícesměrové_skryté": hidden_mc,
+        "matched": len(selected),
+        "zobrazeno": len(rows),
     }
-    filtered = bool(ip_net or mac_hex or iface or state_filter != "all")
-    return {"entries": rows, "gateways": gw_out, "findings": findings, "counts": counts,
-            "truncated": matched > len(rows), "filtered": filtered}
+    return rep
 
 
-def _findings(unicast: list, gateways: list, gw_error: str | None) -> list:
-    out = []
+def _findings(unicast: list, gateways: list, gw_error: str | None) -> tuple[list, dict]:
+    """Vrací (zjištění, {ip: krátké varování pro zvýraznění řádku})."""
+    out: list = []
+    marks: dict = {}
     gw_ips = {g["ip"] for g in gateways}
+
+    def add(severity, message):
+        out.append({"severity": severity, "message": message})
 
     # Jedna MAC u více IP adres
     by_mac: dict = {}
     for e in unicast:
-        if e["mac"] and e["state_code"] not in PROBLEM_STATES:
+        if e["mac"] and e["code"] not in PROBLEM_STATES:
             by_mac.setdefault(e["mac"], []).append(e)
     for mac, group in sorted(by_mac.items()):
         if len(group) < 2:
@@ -464,74 +483,69 @@ def _findings(unicast: list, gateways: list, gw_error: str | None) -> list:
         gw_in = [ip for ip in ips if ip in gw_ips]
         who = f" ({group[0]['vendor']})" if group[0]["vendor"] else ""
         if gw_in:
-            out.append({"level": "varování", "text":
-                        f"Stejnou MAC {mac}{who} jako výchozí brána {', '.join(gw_in)} má i: "
-                        f"{', '.join(ip for ip in ips if ip not in gw_in)}. Může jít o proxy ARP nebo další "
-                        f"adresy samotné brány (např. VIP na firewallu), ale také o ARP spoofing – útočník se "
-                        f"vydává za bránu. Pokud to nečekáte, ověřte MAC brány přímo na bráně a najděte port "
-                        f"na přepínači, kde se tato MAC učí."})
+            others = [ip for ip in ips if ip not in gw_in]
+            add("pozor", f"Stejnou MAC {mac}{who} jako výchozí brána {', '.join(gw_in)} má i: {', '.join(others)}. "
+                         f"Může jít o proxy ARP nebo další adresy samotné brány (např. VIP na firewallu), ale také "
+                         f"o ARP spoofing – útočník se vydává za bránu. Pokud to nečekáte, ověřte MAC brány přímo na "
+                         f"bráně a najděte port na přepínači, kde se tato MAC učí.")
+            for ip in ips:
+                marks[ip] = "MAC brány u více IP"
         else:
-            out.append({"level": "informace", "text":
-                        f"MAC {mac}{who} má více IP adres: {', '.join(ips)}. Obvykle jde o jedno zařízení "
-                        f"s více adresami nebo proxy ARP; pokud to nečekáte, prověřte konflikt adres."})
+            add("info", f"MAC {mac}{who} má více IP adres: {', '.join(ips)}. Obvykle jde o jedno zařízení "
+                        f"s více adresami nebo proxy ARP; pokud to nečekáte, prověřte konflikt adres.")
 
     # Výchozí brána
     if gw_error:
-        out.append({"level": "informace", "text": f"Výchozí bránu se nepodařilo zjistit: {gw_error}"})
+        add("info", f"Výchozí bránu se nepodařilo zjistit: {gw_error}")
     elif not gateways:
-        out.append({"level": "informace", "text": "Server nemá nastavenou výchozí bránu IPv4."})
+        add("info", "Server nemá nastavenou výchozí bránu IPv4.")
     by_ip = {e["ip"]: e for e in unicast}
     for g in gateways:
         e = by_ip.get(g["ip"])
         if e is None:
-            out.append({"level": "informace", "text":
-                        f"Výchozí brána {g['ip']} ({g['interface']}) zatím v ARP tabulce není – server s ní "
-                        f"nedávno nekomunikoval. Ověřte síťovou dostupnost, např. nástrojem pro test sítě."})
-        elif e["state_code"] in PROBLEM_STATES:
-            out.append({"level": "varování", "text":
-                        f"Výchozí brána {g['ip']} ({g['interface']}) neodpovídá na ARP ({e['state']}). "
-                        f"Server se pravděpodobně nedostane mimo svou podsíť – zkontrolujte bránu, kabel, "
-                        f"VLAN a nastavení adresy brány."})
-        elif e["type"] == "statický":
-            out.append({"level": "informace", "text":
-                        f"Výchozí brána {g['ip']} má statický ARP záznam ({e['mac']}). Je to běžná ochrana "
-                        f"proti ARP spoofingu, ale při výměně brány je nutné záznam změnit."})
+            add("info", f"Výchozí brána {g['ip']} ({g['interface']}) zatím v ARP tabulce není – server s ní "
+                        f"nedávno nekomunikoval. Ověřte síťovou dostupnost, např. nástrojem pro test sítě.")
+        elif e["code"] in PROBLEM_STATES:
+            add("pozor", f"Výchozí brána {g['ip']} ({g['interface']}) neodpovídá na ARP ({e['state']}). "
+                         f"Server se pravděpodobně nedostane mimo svou podsíť – zkontrolujte bránu, kabel, "
+                         f"VLAN a nastavení adresy brány.")
+            marks[g["ip"]] = "brána neodpovídá"
+        elif e["kind"] == "statický":
+            add("info", f"Výchozí brána {g['ip']} má statický ARP záznam ({e['mac']}). Je to běžná ochrana "
+                        f"proti ARP spoofingu, ale při výměně brány je nutné záznam změnit.")
 
     # Statické záznamy (mimo bránu)
-    static = [e["ip"] for e in unicast if e["type"] == "statický" and e["ip"] not in gw_ips]
+    static = [e["ip"] for e in unicast if e["kind"] == "statický" and e["ip"] not in gw_ips]
     if static:
         shown = ", ".join(sorted(static, key=_ip_key)[:10]) + (" …" if len(static) > 10 else "")
-        out.append({"level": "informace", "text":
-                    f"Statické ARP záznamy ({len(static)}): {shown}. Byly nastaveny ručně (arp -s / netsh); "
-                    f"ověřte, že jsou záměrné a stále platné."})
+        add("info", f"Statické ARP záznamy ({len(static)}): {shown}. Byly nastaveny ručně (arp -s / netsh); "
+                    f"ověřte, že jsou záměrné a stále platné.")
 
     # Mnoho neúplných záznamů
-    problems = [e for e in unicast if e["state_code"] in PROBLEM_STATES and e["ip"] not in gw_ips]
+    problems = [e for e in unicast if e["code"] in PROBLEM_STATES and e["ip"] not in gw_ips]
     if len(problems) >= MANY_PROBLEMS:
-        out.append({"level": "varování", "text":
-                    f"{len(problems)} záznamů bez odpovědi (neúplné / nedosažitelné). Server se pokouší "
-                    f"kontaktovat adresy, které v síti neodpovídají – vypnutá zařízení, chybná konfigurace "
-                    f"(např. špatná maska), výpadek části sítě, nebo skenování sítě z tohoto serveru."})
-    return out
+        add("pozor", f"{len(problems)} záznamů bez odpovědi (neúplné / nedosažitelné). Server se pokouší "
+                     f"kontaktovat adresy, které v síti neodpovídají – vypnutá zařízení, chybná konfigurace "
+                     f"(např. špatná maska), výpadek části sítě, nebo skenování sítě z tohoto serveru.")
+    return out, marks
 
 
-def _summary(rep: dict, inp: dict) -> str:
-    c = rep["counts"]
-    parts = [f"ARP tabulka: záznamů {c['total']} (dynamické {c['dynamic']}, statické {c['static']}, "
-             f"bez odpovědi {c['problem']})"]
-    if rep["filtered"]:
-        parts.append(f"filtru odpovídá {c['matched']}")
+def _summary(rep: dict) -> str:
+    t = rep["totals"]
+    parts = [f"ARP tabulka: záznamů {t['total']} (dynamické {t['dynamické']}, statické {t['statické']}, "
+             f"bez odpovědi {t['bez_odpovědi']})"]
+    if rep["filters"]:
+        parts.append(f"filtru odpovídá {t['matched']}")
     if rep["truncated"]:
-        parts.append(f"zobrazeno {c['shown']}")
-    gws = rep["gateways"]
-    if gws:
-        g = gws[0]
-        who = f", {g['vendor']}" if g.get("vendor") else ""
-        parts.append(f"brána {g['ip']} – {g['state']}{who}")
+        parts.append(f"zobrazeno {t['zobrazeno']}")
+    if rep["brány"]:
+        g = rep["brány"][0]
+        who = f", {g['výrobce']}" if g.get("výrobce") else ""
+        parts.append(f"brána {g['address']} – {g['state']}{who}")
     text = "; ".join(parts) + "."
-    warn = sum(1 for f in rep["findings"] if f["level"] == "varování")
+    warn = [f["message"].split(". ")[0] for f in rep["findings"] if f["severity"] == "pozor"]
     if warn:
-        text += f" Varování: {warn}."
+        text += " Pozor: " + "; ".join(warn[:2]) + "."
     return text
 
 
@@ -544,22 +558,18 @@ def execute(ctx: ToolContext, inp: dict) -> dict:
         mac_filter_hex(inp["mac"])
 
     ctx.log.info("Čtu ARP tabulku")
-    raw = _read_raw(ctx)
-    rep = build_report(raw, inp)
+    rep = build_report(_read_raw(ctx), inp)
 
-    dns_note = None
-    if inp.get("resolve_names", True) and rep["entries"]:
-        ips = [e["ip"] for e in rep["entries"] if not e["multicast"] and e["mac"]]
-        try:
-            left = float(ctx.time_left()) - 5.0
-        except Exception:  # noqa: BLE001
-            left = DNS_MAX_SECONDS
-        names, done = resolve_names(ips, min(DNS_MAX_SECONDS, left))
-        for e in rep["entries"]:
-            e["name"] = names.get(e["ip"])
+    rows = rep["záznamy"]
+    if inp.get("resolve_names", True) and rows:
+        ips = [r["address"] for r in rows if r["typ"] != "vícesměrový" and r["mac"]]
+        left = ctx.time_left()
+        seconds = DNS_MAX_SECONDS if left is None else min(DNS_MAX_SECONDS, left - 5.0)
+        names, done = resolve_names(ips, seconds)
+        for r in rows:
+            r["name"] = names.get(r["address"])
         if not done:
-            dns_note = "Reverzní DNS nestihl odpovědět u všech adres; chybějící názvy nejsou chyba záznamu."
-    rep["dns_note"] = dns_note
-    rep["summary"] = _summary(rep, inp)
-    ctx.log.info("ARP: %s záznamů, zobrazeno %s", rep["counts"]["total"], rep["counts"]["shown"])
+            rep["note"] = "Reverzní DNS nestihl odpovědět u všech adres; chybějící názvy nejsou chyba záznamu."
+    rep["summary"] = _summary(rep)
+    ctx.log.info("ARP: %s záznamů, zobrazeno %s", rep["totals"]["total"], rep["totals"]["zobrazeno"])
     return rep

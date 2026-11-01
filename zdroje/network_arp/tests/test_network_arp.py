@@ -252,70 +252,94 @@ def test_multicast_detection():
 # --------------------------------------------------------------------------- výsledek
 
 
+def _ips(rep):
+    return [r["address"] for r in rep["záznamy"]]
+
+
 def test_report_default_hides_multicast_and_marks_gateway():
     rep = tool.build_report(raw_basic(), {})
-    ips = [e["ip"] for e in rep["entries"]]
+    ips = _ips(rep)
     assert "224.0.0.22" not in ips and "192.168.1.255" not in ips
-    assert rep["counts"]["multicast_hidden"] == 2
-    assert rep["counts"]["total"] == 6
-    assert rep["counts"]["static"] == 1 and rep["counts"]["problem"] == 1
-    gw = next(e for e in rep["entries"] if e["ip"] == "192.168.1.1")
-    assert gw["is_gateway"] and gw["vendor"] == "Fortinet" and gw["type"] == "dynamický"
-    assert rep["gateways"][0]["state"] == "dosažitelný"
+    t = rep["totals"]
+    assert t["vícesměrové_skryté"] == 2 and t["total"] == 6
+    assert t["statické"] == 1 and t["bez_odpovědi"] == 1
+    gw = next(r for r in rep["záznamy"] if r["address"] == "192.168.1.1")
+    assert gw["brána"] is True and gw["výrobce"] == "Fortinet" and gw["typ"] == "dynamický"
+    assert rep["brány"][0]["state"] == "dosažitelný"
+    assert rep["filters"] is None and rep["truncated"] is False
     # řazení: rozhraní, pak IP číselně
     assert ips[0] == "192.168.1.1" and ips[-1] == "10.0.0.5"
 
 
+def test_row_fits_console_columns():
+    # konzole ukáže nejvýš 8 sloupců – brána musí být mezi nimi, "warning" až deváté
+    rep = tool.build_report(raw_basic(), {})
+    row = rep["záznamy"][0]
+    assert list(row)[:8] == ["address", "mac", "výrobce", "name", "typ", "state", "rozhraní", "brána"]
+    assert len(row) == 8
+
+
+def test_fortigate_vendor_from_test_server():
+    assert tool.vendor(mac("AC-71-2E-FB-B3-B8")) == "Fortinet"
+
+
 def test_report_include_multicast():
     rep = tool.build_report(raw_basic(), {"include_multicast": True})
-    assert rep["counts"]["shown"] == 8
+    assert rep["totals"]["zobrazeno"] == 8
+    assert {r["typ"] for r in rep["záznamy"] if r["address"] in ("224.0.0.22", "192.168.1.255")} == {"vícesměrový"}
+    assert len(tool.build_report(raw_basic(), {"include_multicast": True, "state": "static"})["záznamy"]) == 1
 
 
 def test_filters():
     raw = raw_basic()
-    assert [e["ip"] for e in tool.build_report(raw, {"ip": "10.0.0.0/8"})["entries"]] == ["10.0.0.5"]
-    assert [e["ip"] for e in tool.build_report(raw, {"mac": "00:50:56"})["entries"]] == ["192.168.1.20"]
-    assert [e["ip"] for e in tool.build_report(raw, {"interface": "ethernet1"})["entries"]] == ["10.0.0.5"]
-    assert [e["ip"] for e in tool.build_report(raw, {"interface": "7"})["entries"]] == ["10.0.0.5"]
-    assert [e["ip"] for e in tool.build_report(raw, {"state": "static"})["entries"]] == ["192.168.1.50"]
-    assert [e["ip"] for e in tool.build_report(raw, {"state": "problem"})["entries"]] == ["192.168.1.40"]
-    assert len(tool.build_report(raw, {"state": "dynamic"})["entries"]) == 5
+    assert _ips(tool.build_report(raw, {"ip": "10.0.0.0/8"})) == ["10.0.0.5"]
+    assert _ips(tool.build_report(raw, {"mac": "00:50:56"})) == ["192.168.1.20"]
+    assert _ips(tool.build_report(raw, {"interface": "ethernet1"})) == ["10.0.0.5"]
+    assert _ips(tool.build_report(raw, {"interface": "7"})) == ["10.0.0.5"]
+    assert _ips(tool.build_report(raw, {"state": "static"})) == ["192.168.1.50"]
+    assert _ips(tool.build_report(raw, {"state": "problem"})) == ["192.168.1.40"]
+    assert len(tool.build_report(raw, {"state": "dynamic"})["záznamy"]) == 5
     rep = tool.build_report(raw, {"limit": 2})
-    assert rep["truncated"] and rep["counts"]["shown"] == 2 and rep["counts"]["matched"] == 6
+    assert rep["truncated"] and rep["totals"]["zobrazeno"] == 2 and rep["totals"]["matched"] == 6
+    rep = tool.build_report(raw, {"ip": "10.0.0.0/8", "state": "problem"})
+    assert rep["filters"] == "adresa 10.0.0.0/8, bez odpovědi"
 
 
 def test_finding_gateway_mac_shared_is_warning():
     raw = raw_basic()
     raw["neighbors"].append(nb("192.168.1.66", GW_MAC))
     rep = tool.build_report(raw, {})
-    warns = [f["text"] for f in rep["findings"] if f["level"] == "varování"]
+    warns = [f["message"] for f in rep["findings"] if f["severity"] == "pozor"]
     assert any("ARP spoofing" in t and "192.168.1.66" in t for t in warns)
+    marked = {r["address"]: r.get("warning") for r in rep["záznamy"]}
+    assert marked["192.168.1.66"] and marked["192.168.1.1"] and not marked["192.168.1.20"]
 
 
 def test_finding_shared_mac_without_gateway_is_info():
     raw = raw_basic()
     raw["neighbors"].append(nb("192.168.1.21", "00-50-56-AA-BB-01"))
     rep = tool.build_report(raw, {})
-    infos = [f for f in rep["findings"] if "192.168.1.21" in f["text"]]
-    assert infos and infos[0]["level"] == "informace"
+    infos = [f for f in rep["findings"] if "192.168.1.21" in f["message"]]
+    assert infos and infos[0]["severity"] == "info"
 
 
 def test_finding_gateway_unreachable_and_missing():
     raw = raw_basic()
     raw["neighbors"][0] = nb("192.168.1.1", None, state=0)
     rep = tool.build_report(raw, {})
-    assert any(f["level"] == "varování" and "neodpovídá" in f["text"] for f in rep["findings"])
+    assert any(f["severity"] == "pozor" and "neodpovídá" in f["message"] for f in rep["findings"])
+    assert next(r for r in rep["záznamy"] if r["address"] == "192.168.1.1")["warning"] == "brána neodpovídá"
     raw["neighbors"].pop(0)
     rep = tool.build_report(raw, {})
-    assert any("zatím v ARP tabulce není" in f["text"] for f in rep["findings"])
-    assert rep["gateways"][0]["state"] == "není v ARP tabulce"
+    assert any("zatím v ARP tabulce není" in f["message"] for f in rep["findings"])
+    assert rep["brány"][0]["state"] == "není v ARP tabulce"
 
 
 def test_finding_no_gateway_and_static_and_many_problems():
     raw = raw_basic()
     raw["gateways"] = []
     raw["neighbors"] += [nb(f"192.168.1.{100 + i}", None, state=1) for i in range(10)]
-    texts = [f["text"] for f in tool.build_report(raw, {})["findings"]]
+    texts = [f["message"] for f in tool.build_report(raw, {})["findings"]]
     assert any("nemá nastavenou výchozí bránu" in t for t in texts)
     assert any("Statické ARP záznamy (1): 192.168.1.50" in t for t in texts)
     assert any(t.startswith("11 záznamů bez odpovědi") for t in texts)
@@ -325,35 +349,59 @@ def test_finding_no_gateway_and_static_and_many_problems():
 
 
 def _patch_execute(monkeypatch, raw, names=None):
+    names = names or {}
+
+    def fake_lookup(ip):
+        if ip in names:
+            return names[ip], [], [ip]
+        raise OSError("nenalezeno")
+
     monkeypatch.setattr(tool, "require_windows", lambda ctx, name: None)
     monkeypatch.setattr(tool, "_read_raw", lambda ctx: raw)
-    monkeypatch.setattr(tool.socket, "gethostbyaddr",
-                        lambda ip: ((names or {})[ip], [], [ip]) if ip in (names or {}) else (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(tool.socket, "gethostbyaddr", fake_lookup)
 
 
 def test_execute_with_dns_and_summary(monkeypatch):
     _patch_execute(monkeypatch, raw_basic(), {"192.168.1.1": "fw.firma.local", "192.168.1.20": "srv1.firma.local"})
     res = tool.execute(FakeCtx(), {})
-    by = {e["ip"]: e for e in res["entries"]}
+    by = {r["address"]: r for r in res["záznamy"]}
     assert by["192.168.1.1"]["name"] == "fw.firma.local"
     assert by["192.168.1.30"]["name"] is None
-    assert res["dns_note"] is None
+    assert res["note"] is None
     assert res["summary"].startswith("ARP tabulka: záznamů 6 (dynamické 5, statické 1, bez odpovědi 1)")
     assert "brána 192.168.1.1 – dosažitelný, Fortinet" in res["summary"]
+    assert "Pozor" not in res["summary"]
+
+
+def test_execute_summary_mentions_warning(monkeypatch):
+    raw = raw_basic()
+    raw["neighbors"].append(nb("192.168.1.66", GW_MAC))
+    _patch_execute(monkeypatch, raw)
+    res = tool.execute(FakeCtx(), {"resolve_names": False})
+    assert "Pozor: Stejnou MAC 90-6C-AC-11-22-33" in res["summary"]
 
 
 def test_execute_without_dns(monkeypatch):
     _patch_execute(monkeypatch, raw_basic())
     monkeypatch.setattr(tool, "resolve_names", lambda *a: pytest.fail("DNS se nemá volat"))
     res = tool.execute(FakeCtx(), {"resolve_names": False})
-    assert all(e["name"] is None for e in res["entries"])
+    assert all(r["name"] is None for r in res["záznamy"])
 
 
 def test_execute_dns_timeout_reported(monkeypatch):
     _patch_execute(monkeypatch, raw_basic())
     monkeypatch.setattr(tool, "resolve_names", lambda ips, s: ({}, False))
     res = tool.execute(FakeCtx(), {})
-    assert res["dns_note"]
+    assert res["note"]
+
+
+def test_execute_without_deadline(monkeypatch):
+    # ToolContext.time_left() vrací None, když jádro nezadá časový limit
+    _patch_execute(monkeypatch, raw_basic())
+    seen = {}
+    monkeypatch.setattr(tool, "resolve_names", lambda ips, s: (seen.setdefault("s", s), ({}, True))[1])
+    tool.execute(FakeCtx(left=None), {})
+    assert seen["s"] == tool.DNS_MAX_SECONDS
 
 
 def test_execute_invalid_input_before_windows(monkeypatch):
@@ -373,9 +421,9 @@ def test_resolve_names_respects_deadline(monkeypatch):
 
 
 def test_output_size_within_limit():
+    import json
     raw = raw_basic()
     raw["neighbors"] = [nb(f"10.{i // 250}.{i % 250}.1", f"00-50-56-00-{i // 256:02X}-{i % 256:02X}",
                            iface="Ethernet1") for i in range(600)]
     rep = tool.build_report(raw, {"limit": 500})
-    import json
     assert len(json.dumps(rep, ensure_ascii=False).encode("utf-8")) < 200 * 1024

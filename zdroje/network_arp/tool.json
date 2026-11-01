@@ -3,7 +3,7 @@
   "id": "network.arp",
   "name": "ARP tabulka",
   "description": "Vypíše ARP tabulku serveru (sousedé IPv4: IP adresa → MAC adresa) s výrobcem podle MAC, názvem z DNS, síťovým rozhraním a stavem záznamu. Označí výchozí bránu a upozorní na podezřelé záznamy: jedna MAC u více IP adres (možné ARP spoofing nebo proxy ARP), nedosažitelná brána, statické záznamy, mnoho neúplných záznamů. Použij, když se ptají, jaká zařízení server vidí v síti, komu patří IP nebo MAC adresa, při podezření na konflikt IP adres nebo ARP spoofing. Jen čte, tabulku nemění.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "PyControl",
   "core_compat": ">=1.0,<2.0",
   "entrypoint": "tool:execute",
