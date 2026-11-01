@@ -2,7 +2,7 @@
   "schema_version": 1,
   "publisher": "Jan",
   "key_id": "48231b4d5ed8b52c",
-  "generated": "2026-10-31T22:52:20+00:00",
+  "generated": "2026-11-01T17:54:44+00:00",
   "components": [
     {
       "type": "tool",
@@ -38,6 +38,33 @@
           "key_id": "48231b4d5ed8b52c",
           "released": "2026-10-31T22:52:19Z",
           "changelog": "Pole summary pro Telegram a číslo verze ve výsledku",
+          "security_notes": "",
+          "yanked": false
+        }
+      ]
+    },
+    {
+      "type": "tool",
+      "id": "network.arp",
+      "name": "ARP tabulka",
+      "description": "Vypíše ARP tabulku serveru (sousedé IPv4: IP adresa → MAC adresa) s výrobcem podle MAC, názvem z DNS, síťovým rozhraním a stavem záznamu. Označí výchozí bránu a upozorní na podezřelé záznamy: jedna MAC u více IP adres (možné ARP spoofing nebo proxy ARP), nedosažitelná brána, statické záznamy, mnoho neúplných záznamů. Použij, když se ptají, jaká zařízení server vidí v síti, komu patří IP nebo MAC adresa, při podezření na konflikt IP adres nebo ARP spoofing. Jen čte, tabulku nemění.",
+      "author": "PyControl",
+      "versions": [
+        {
+          "version": "1.0.1",
+          "core_compat": ">=1.0,<2.0",
+          "risk": "read",
+          "permissions": [
+            "system.read",
+            "network.read"
+          ],
+          "dependencies": [],
+          "url": "./balicky/network.arp-1.0.1.pctool",
+          "sha256": "26a08a15e4826ea8a6e8cee1fc69fe1d816d0f4eea39c77950ea11f51db38d28",
+          "size": 10266,
+          "key_id": "48231b4d5ed8b52c",
+          "released": "2026-11-01T17:54:43Z",
+          "changelog": "První vydání: ARP tabulka (IPv4) s výrobcem podle MAC, názvy z DNS, výchozí bránou a zjištěními (sdílená MAC brány / ARP spoofing, nedosažitelná brána, statické záznamy).",
           "security_notes": "",
           "yanked": false
         }
